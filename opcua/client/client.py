@@ -86,7 +86,7 @@ class Client(object):
     the raw OPC-UA services interface.
     """
 
-    def __init__(self, url, timeout=4):
+    def __init__(self, url, timeout=4, secure_channel_timeout=3600000, session_timeout=3600000):
         """
 
         :param url: url of the server.
@@ -96,6 +96,12 @@ class Client(object):
         :param timeout:
             Each request sent to the server expects an answer within this
             time. The timeout is specified in seconds.
+
+        :param secure_channel_timeout:
+            Timeout for the secure channel, specified in milliseconds.
+
+        :param session_timeout:
+            Timeout for the session, specified in milliseconds.
         """
         self.logger = logging.getLogger(__name__)
         self.server_url = urlparse(url)
@@ -108,8 +114,8 @@ class Client(object):
         self.product_uri = "urn:freeopcua.github.io:client"
         self.security_policy = ua.SecurityPolicy()
         self.secure_channel_id = None
-        self.secure_channel_timeout = 3600000  # 1 hour
-        self.session_timeout = 3600000  # 1 hour
+        self.secure_channel_timeout = secure_channel_timeout  # 1 hour
+        self.session_timeout = session_timeout  # 1 hour
         self._policy_ids = []
         self.uaclient = UaClient(timeout)
         self.user_certificate = None
@@ -308,7 +314,11 @@ class Client(object):
         params.ClientNonce = nonce  # this nonce is used to create a symmetric key
         result = self.uaclient.open_secure_channel(params)
         self.security_policy.make_symmetric_key(nonce, result.ServerNonce)
-        self.secure_channel_timeout = result.SecurityToken.RevisedLifetime
+        if self.secure_channel_timeout != result.SecurityToken.RevisedLifetime:
+            self.logger.warning("Requested secure channel timeout to be %dms, got %dms instead",
+                                self.secure_channel_timeout,
+                                result.SecurityToken.RevisedLifetime)
+            self.secure_channel_timeout = result.SecurityToken.RevisedLifetime
 
     def close_secure_channel(self):
         return self.uaclient.close_secure_channel()
@@ -355,7 +365,7 @@ class Client(object):
         params.ClientDescription = desc
         params.EndpointUrl = self.server_url.geturl()
         params.SessionName = self.description + " Session" + str(self._session_counter)
-        params.RequestedSessionTimeout = 3600000
+        params.RequestedSessionTimeout = self.session_timeout
         params.MaxResponseMessageSize = 0  # means no max size
         response = self.uaclient.create_session(params)
         if self.security_policy.client_certificate is None:
@@ -371,7 +381,11 @@ class Client(object):
         # remember PolicyId's: we will use them in activate_session()
         ep = Client.find_endpoint(response.ServerEndpoints, self.security_policy.Mode, self.security_policy.URI)
         self._policy_ids = ep.UserIdentityTokens
-        self.session_timeout = response.RevisedSessionTimeout
+        if self.session_timeout != response.RevisedSessionTimeout:
+            self.logger.warning("Requested session timeout to be %dms, got %dms instead",
+                                self.secure_channel_timeout,
+                                response.RevisedSessionTimeout)
+            self.session_timeout = response.RevisedSessionTimeout
         self.keepalive = KeepAlive(
             self, min(self.session_timeout, self.secure_channel_timeout) * 0.7)  # 0.7 is from spec
         self.keepalive.start()
