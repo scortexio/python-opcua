@@ -129,6 +129,7 @@ class ThreadLoop(threading.Thread):
 
     def __init__(self):
         threading.Thread.__init__(self)
+        self.daemon = True
         self.logger = logging.getLogger(__name__)
         self.loop = None
         self._cond = threading.Condition()
